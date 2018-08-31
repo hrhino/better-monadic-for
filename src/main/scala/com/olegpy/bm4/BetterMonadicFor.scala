@@ -1,8 +1,5 @@
 package com.olegpy.bm4
 
-import applicativish.TupleLifter
-import applicativish.TupleLifters.BogusOption
-
 import scala.tools.nsc
 import nsc.Global
 import nsc.plugins.Plugin
@@ -162,10 +159,13 @@ class ApplicativeSimulator(plugin: BetterMonadicFor, val global: Global)
   import global._
 
   val tupleLifterClassConstructor = rootMirror.getRequiredClass("applicativish.TupleLifter")
+  def TupleLifter_apply = tupleLifterClassConstructor.info.decl(nme.apply)
 
   override protected def newTransformer(unit: global.CompilationUnit): global.Transformer = new ApplicatizingTransformer(unit)
 
   val tupleClass = rootMirror.requiredClass[Tuple2[_,_]].tpe
+
+  val nme_tupleLift = TermName("tupleLift")
 
   override val phaseName: String = "bm4-applicatizer"
   override val runsAfter: List[String] = "typer" :: Nil
@@ -174,6 +174,9 @@ class ApplicativeSimulator(plugin: BetterMonadicFor, val global: Global)
     extends TypingTransformer(unit) {
 
     override def transform(tree: Tree): Tree = tree match {
+      case i@Import(body, selectors) => // add contexts for imports
+        localTyper = newTyper(localTyper.context.make(tree = i).asInstanceOf[Context]).asInstanceOf[analyzer.Typer]
+        i
 
       case Apply(ta1@TypeApply(fm1@Select(vm, nme.flatMap), fmType1 :: Nil),
       (Function(vValDef :: Nil, Apply(TypeApply(fm2@Select(wm, nme.flatMap), fmType2 :: Nil), Function(wValDef :: Nil, expr_u) :: Nil))) :: Nil)
@@ -181,40 +184,18 @@ class ApplicativeSimulator(plugin: BetterMonadicFor, val global: Global)
           (vm.tpe.typeConstructor == wm.tpe.typeConstructor) &&
           !wm.exists(vValDef.symbol == _.symbol) ⇒ {
 
-        val ctxt = localTyper.context
+        val lifterType = appliedType(tupleLifterClassConstructor, vm.tpe.typeConstructor :: Nil)
 
-        val mTpe: Type = vm.tpe.typeConstructor
+        val lifterResult = inferImplicitByTypeSilent(lifterType, localTyper.context.asInstanceOf[Context], tree.pos)
 
-        val tt = tq"$tupleLifterClassConstructor[$mTpe]"
+        inform(lifterResult.toString())
 
-        val tlc = tupleLifterClassConstructor
-
-        val lifterType = appliedType(tlc, vm.tpe.typeConstructor :: Nil)
-
-        val lt2 = typeOf[TupleLifter[Option]]
-        val lt3 = typeOf[TupleLifter[BogusOption]]
-
-        val a = analyzer
-
-        val ctx = localTyper.context1.asInstanceOf[a.Context]
-
-        val implSearch = a.inferImplicitByType(lifterType, ctx, tree.pos)
-        val implSearch2 = a.inferImplicitByType(lt2, ctx, tree.pos)
-        val implSearch3 = a.inferImplicitByType(lt3, ctx, tree.pos)
-
-        val testTupledTree = q"(null.asInstanceOf[${vm.tpe}], null.asInstanceOf[${wm.tpe}]).tupled"
-        val attempt = scala.util.Try { ctx.withImplicitsEnabled(localTyper.typedPos(tree.pos)(testTupledTree))}
-
-        println(attempt, lt2, lt3, implSearch2, implSearch3)
-
-        if(implSearch.isFailure)
+        if(lifterResult.isFailure)
           super.transform(tree)
         else {
-
-          val  tupleLifterObj = implSearch.tree
+          val lifterTree = lifterResult.tree
 
           val expr = transform(expr_u)
-
 
           val vt: global.Type = vm.tpe.typeArgs.head
           val wt: global.Type = wm.tpe.typeArgs.head
@@ -244,7 +225,7 @@ class ApplicativeSimulator(plugin: BetterMonadicFor, val global: Global)
             ValDef(wValDef.symbol, q"$vwArgName._2"),
             expr)
 
-          val newQual = q"$tupleLifterObj.tupleLift[$vt,$wt](($vm,$wm))"
+          val newQual = q"$lifterTree.tupleLift[$vt,$wt](($vm,$wm))"
           // newQual.setType(mOfTuple)
 
           val f3 = Function(vwArgDef :: Nil, newExpr)

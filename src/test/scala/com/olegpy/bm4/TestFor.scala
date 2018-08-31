@@ -1,7 +1,6 @@
 package com.olegpy.bm4
 
-import applicativish.TupleLifter
-import applicativish.TupleLifters._
+import applicativish._
 
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
@@ -28,9 +27,6 @@ class TestFor extends FreeSpec {
 
   import com.olegpy.bm4.StupidImplicits._
 
-  val xxx = implicitly[TupleLifter[Option]]
-  val yyy= implicitly[TupleLifter[BogusOption]]
-
   val ljsfljfds = 2
 
 /*
@@ -47,6 +43,7 @@ class TestFor extends FreeSpec {
   (null.asInstanceOf[Option[Int]], null.asInstanceOf[Option[Int]]).tupled
 
 
+  import TupleLifters._
   val scuz = for {
     a ← Option(1)
     b ← Option(2)
@@ -55,13 +52,19 @@ class TestFor extends FreeSpec {
   println(scuz)
 
 
-  val x = for {
+  def x = for {
     a ← BogusOption(1)
     b ← BogusOption(2)
     c ← BogusOption(3)
   } yield a+b+c
 
-  println(x)
+  assert(BogusOptionLifter.invocations == 0)
+  x
+  assert(BogusOptionLifter.invocations == 1)
+  x
+  assert(BogusOptionLifter.invocations == 2)
+
+  assert(x.a == 33, x)
 
 
   val y = scala.Some.apply[Int](1)
